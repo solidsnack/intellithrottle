@@ -1,0 +1,60 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail
+function -h {
+cat <<USAGE
+ USAGE: intellithrottle
+
+  Limit CPU usage of active IntelliJ processes on Macs.
+
+USAGE
+}; function --help { -h ;}                 # A nice way to handle -h and --help
+export LC_ALL=en_US.UTF-8                    # A locale that works consistently
+
+function main {
+  throttle
+}
+
+function throttle {
+  local percent=80 dotapp=
+  while read -r pid path
+  do
+    dotapp="${path#/Applications/}"
+    dotapp="${dotapp%%.app/*}"
+    if ps -ax -o command | fgrep -v fgrep | egrep -q "^cputhrottle $pid "
+    then
+      log "Already limitng $dotapp (process $pid)."
+    else
+      log "Limiting $dotapp (process $pid) to $percent% CPU."
+      sudo cputhrottle "$pid" 80 &
+    fi
+    # NB: cputhrottle will terminate on its own when IntelliJ shuts down.
+  done < <(find_intellij)
+}
+
+function find_intellij {
+  patterns=( /Applications/PyCharm
+             /Applications/RubyMine
+             /Applications/IntelliJ )
+  ps -ax -o pid,comm |                 # Format is: /^[ ]*<PID>[ ]<full path>$/
+  fgrep -f <(printf '%s\n' "${patterns[@]}") |
+  fgrep '/Contents/MacOS/' | sed 's/^ *//'
+}
+
+
+##################################################################### Utilities
+
+function msg { out "$*" >&2 ;}
+function err { local x=$? ; msg "$*" ; return $(( $x == 0 ? 1 : $x )) ;}
+function out { printf '%s\n' "$*" ;}
+function log { logger -p user.notice -t "$(basename "$0")[$$]" <<<"$*" ;}
+
+# Handles "no-match" exit code specified by POSIX for filtering tools.
+function maybe { "$@" || return $(( $? == 1 ? 0 : $? )) ;}
+
+
+######################### Delegates to subcommands or runs main, as appropriate
+
+if declare -f -- "${1:-}" >/dev/null
+then "$@"
+else main "$@"
+fi
